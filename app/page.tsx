@@ -105,7 +105,7 @@ import { TacticalPeriscopeScope } from '@/components/TacticalPeriscopeScope';
    ========================================================================= */
 
 export type FactionId = 'loyalists' | 'rebels' | 'coalition' | 'volskan' | 'unified';
-export type UnitType = 'armor' | 'infantry' | 'mechanized' | 'artillery' | 'sam';
+export type UnitType = 'armor' | 'infantry' | 'mechanized' | 'artillery' | 'sam' | 'carrier' | 'destroyer' | 'submarine';
 export type AirRole = 'AIR_SUPERIORITY' | 'CAS' | 'INTERCEPTION' | 'INTERDICTION' | 'RECON';
 export type Stance = 'OFFENSIVE_THRUST' | 'DEFENSIVE_HOLD' | 'FLANK_AMBUSH' | 'WITHDRAW_REFUEL';
 
@@ -125,6 +125,15 @@ export interface UnitComponents {
   weapons: number; // 0 to 100%
 }
 
+export interface UnitHistoryEntry {
+  id: string;
+  timestamp: string;
+  simTick: number;
+  type: 'SPAWN' | 'ORDER' | 'ORDERS' | 'COMBAT' | 'KILL' | 'DAMAGE' | 'MALFUNCTION' | 'WEATHER' | 'REPAIR' | 'PROMOTION' | 'NAVAL_SORTIE' | 'ASW_ENGAGEMENT' | 'NAVAL';
+  headline: string;
+  detail: string;
+}
+
 export interface DesignatedRepairZone {
   id: string;
   name: string;
@@ -136,6 +145,7 @@ export interface DesignatedRepairZone {
   capacity: number;
   isSabotaged?: boolean;
   sabotageTimer?: number;
+  isNavalBase?: boolean;
 }
 
 const INITIAL_REPAIR_ZONES: DesignatedRepairZone[] = [
@@ -163,11 +173,12 @@ const INITIAL_REPAIR_ZONES: DesignatedRepairZone[] = [
     id: 'rep-coa-1',
     name: 'Atlantic Fleet Mobile Repair Anchorage',
     factionId: 'coalition',
-    x: 230,
-    y: 740,
-    radius: 100,
-    repairRate: 18,
-    capacity: 5
+    x: 120,
+    y: 390,
+    radius: 120,
+    repairRate: 22,
+    capacity: 6,
+    isNavalBase: true
   },
   {
     id: 'rep-vol-1',
@@ -178,6 +189,39 @@ const INITIAL_REPAIR_ZONES: DesignatedRepairZone[] = [
     radius: 100,
     repairRate: 18,
     capacity: 5
+  },
+  {
+    id: 'rep-nav-portbella',
+    name: 'Port Bella Deepwater Naval Station',
+    factionId: 'loyalists',
+    x: 940,
+    y: 750,
+    radius: 110,
+    repairRate: 20,
+    capacity: 5,
+    isNavalBase: true
+  },
+  {
+    id: 'rep-nav-volskanpen',
+    name: 'Volskan Red Star Submarine Pen & Drydock',
+    factionId: 'volskan',
+    x: 1240,
+    y: 130,
+    radius: 110,
+    repairRate: 20,
+    capacity: 5,
+    isNavalBase: true
+  },
+  {
+    id: 'rep-nav-rebelpier',
+    name: 'Sierra Guerrilla Coastal Slipway',
+    factionId: 'rebels',
+    x: 150,
+    y: 760,
+    radius: 100,
+    repairRate: 15,
+    capacity: 4,
+    isNavalBase: true
   }
 ];
 
@@ -217,6 +261,14 @@ export interface Unit {
   isHullBreached?: boolean;
   isUnderRepair?: boolean;
   repairZoneId?: string;
+  history?: UnitHistoryEntry[];
+  isNaval?: boolean;
+  isSubmerged?: boolean;
+  carrierAircraft?: number;
+  carrierMaxAircraft?: number;
+  sonarCooldown?: number;
+  torpedoCooldown?: number;
+  activeDebuffs?: Array<{ type: string; label: string; desc: string }>;
 }
 
 export interface Airbase {
@@ -276,9 +328,52 @@ export interface ArtilleryShell {
   factionId: FactionId;
 }
 
+export interface Torpedo {
+  id: string;
+  factionId: FactionId;
+  sourceUnitId?: string;
+  targetUnitId?: string;
+  x: number;
+  y: number;
+  startX?: number;
+  startY?: number;
+  targetX?: number;
+  targetY?: number;
+  speed: number;
+  heading: number;
+  damage: number;
+  life: number;
+  trail: { x: number; y: number }[];
+}
+
+export interface SonarPing {
+  id: string;
+  factionId: FactionId;
+  sourceUnitId?: string;
+  x: number;
+  y: number;
+  radius: number;
+  maxRadius: number;
+  duration: number;
+  elapsed: number;
+}
+
+export interface DepthCharge {
+  id: string;
+  factionId: FactionId;
+  sourceUnitId?: string;
+  x: number;
+  y: number;
+  targetX: number;
+  targetY: number;
+  progress: number; // 0 to 1
+  duration: number;
+  damage: number;
+}
+
 export interface VisualEffect {
   id: string;
-  type: 'EXPLOSION' | 'SMOKE' | 'NAPALM' | 'TRACER' | 'FLANK_ALERT';
+  type: 'EXPLOSION' | 'SMOKE' | 'NAPALM' | 'TRACER' | 'FLANK_ALERT' | 'TORPEDO_WAKE' | 'DEPTH_CHARGE_EXPLOSION' | 'SONAR_WAVE' | 'WATER_GEYSER';
   x: number;
   y: number;
   targetX?: number;
@@ -986,22 +1081,196 @@ function createInitialUnits(): Unit[] {
       isRetreating: false,
       range: 80,
       reloadTimer: 0
+    },
+
+    // 5. NAVAL ASSETS & FLEET CARRIERS
+    {
+      id: 'coa-nav-cv63',
+      name: 'CV-63 USS Constitution (Fleet Carrier)',
+      factionId: 'coalition',
+      type: 'carrier',
+      x: 110,
+      y: 380,
+      vx: 0,
+      vy: 0,
+      heading: 90,
+      targetX: 130,
+      targetY: 420,
+      speed: 0.5,
+      maxSpeed: 0.7,
+      strength: 100,
+      maxStrength: 100,
+      morale: 98,
+      fuel: 100,
+      entrenchment: 40,
+      kills: 0,
+      inCombat: false,
+      isRetreating: false,
+      range: 350,
+      reloadTimer: 0
+    },
+    {
+      id: 'coa-nav-dd992',
+      name: 'USS Fletcher DD-992 (ASW Destroyer)',
+      factionId: 'coalition',
+      type: 'destroyer',
+      x: 130,
+      y: 450,
+      vx: 0,
+      vy: 0,
+      heading: 80,
+      targetX: 150,
+      targetY: 490,
+      speed: 0.8,
+      maxSpeed: 1.1,
+      strength: 100,
+      maxStrength: 100,
+      morale: 95,
+      fuel: 100,
+      entrenchment: 30,
+      kills: 0,
+      inCombat: false,
+      isRetreating: false,
+      range: 220,
+      reloadTimer: 0
+    },
+    {
+      id: 'vol-nav-k129',
+      name: 'K-129 "Red October" Nuclear Submarine',
+      factionId: 'volskan',
+      type: 'submarine',
+      x: 1210,
+      y: 150,
+      vx: 0,
+      vy: 0,
+      heading: 210,
+      targetX: 1050,
+      targetY: 220,
+      speed: 0.7,
+      maxSpeed: 0.95,
+      strength: 100,
+      maxStrength: 100,
+      morale: 96,
+      fuel: 100,
+      entrenchment: 50,
+      kills: 0,
+      inCombat: false,
+      isRetreating: false,
+      range: 190,
+      reloadTimer: 0
+    },
+    {
+      id: 'vol-nav-groza',
+      name: 'Sovremenny Destroyer "Groza"',
+      factionId: 'volskan',
+      type: 'destroyer',
+      x: 1230,
+      y: 200,
+      vx: 0,
+      vy: 0,
+      heading: 200,
+      targetX: 1140,
+      targetY: 270,
+      speed: 0.8,
+      maxSpeed: 1.1,
+      strength: 100,
+      maxStrength: 100,
+      morale: 94,
+      fuel: 95,
+      entrenchment: 30,
+      kills: 0,
+      inCombat: false,
+      isRetreating: false,
+      range: 230,
+      reloadTimer: 0
+    },
+    {
+      id: 'loy-nav-grau',
+      name: 'BAP Almirante Grau (Coastal Frigate)',
+      factionId: 'loyalists',
+      type: 'destroyer',
+      x: 930,
+      y: 740,
+      vx: 0,
+      vy: 0,
+      heading: 300,
+      targetX: 890,
+      targetY: 710,
+      speed: 0.7,
+      maxSpeed: 0.95,
+      strength: 90,
+      maxStrength: 100,
+      morale: 85,
+      fuel: 90,
+      entrenchment: 40,
+      kills: 0,
+      inCombat: false,
+      isRetreating: false,
+      range: 200,
+      reloadTimer: 0
+    },
+    {
+      id: 'reb-nav-manta',
+      name: 'Sierra Manta Coastal Submarine',
+      factionId: 'rebels',
+      type: 'submarine',
+      x: 160,
+      y: 750,
+      vx: 0,
+      vy: 0,
+      heading: 45,
+      targetX: 220,
+      targetY: 710,
+      speed: 0.65,
+      maxSpeed: 0.9,
+      strength: 85,
+      maxStrength: 90,
+      morale: 92,
+      fuel: 85,
+      entrenchment: 45,
+      kills: 0,
+      inCombat: false,
+      isRetreating: false,
+      range: 160,
+      reloadTimer: 0
     }
   ];
 
-  return rawUnits.map(u => ({
-    ...u,
-    components: {
-      hull: u.strength,
-      engine: 100,
-      weapons: 100
-    },
-    isEngineDisabled: false,
-    isWeaponJammed: false,
-    isHullBreached: false,
-    isUnderRepair: false,
-    repairZoneId: undefined
-  }));
+  return rawUnits.map(u => {
+    const isNaval = u.type === 'carrier' || u.type === 'destroyer' || u.type === 'submarine';
+    const isSub = u.type === 'submarine';
+    const isCarrier = u.type === 'carrier';
+    return {
+      ...u,
+      components: {
+        hull: u.strength,
+        engine: 100,
+        weapons: 100
+      },
+      isEngineDisabled: false,
+      isWeaponJammed: false,
+      isHullBreached: false,
+      isUnderRepair: false,
+      repairZoneId: undefined,
+      isNaval,
+      isSubmerged: isSub,
+      carrierAircraft: isCarrier ? 8 : undefined,
+      carrierMaxAircraft: isCarrier ? 10 : undefined,
+      sonarCooldown: 0,
+      torpedoCooldown: 0,
+      activeDebuffs: [],
+      history: [
+        {
+          id: `hist-init-${u.id}`,
+          timestamp: '06:00:00',
+          simTick: 0,
+          type: 'SPAWN',
+          headline: `COMMISSIONED INTO SERVICE`,
+          detail: `${u.name} stationed at tactical grid coordinates [${Math.round(u.x)}, ${Math.round(u.y)}]. Readiness 100%.`
+        }
+      ]
+    };
+  });
 }
 
 /* =========================================================================
@@ -1028,6 +1297,34 @@ function pointInPolygon(x: number, y: number, polygon: [number, number][]): bool
     if (intersect) inside = !inside;
   }
   return inside;
+}
+
+function appendUnitHistory(
+  unit: Unit,
+  type: UnitHistoryEntry['type'],
+  headline: string,
+  detail: string,
+  simTickVal: number,
+  hourVal: number,
+  minVal: number
+) {
+  if (!unit.history) unit.history = [];
+  const timeStr = `${String(Math.floor(hourVal)).padStart(2, '0')}:${String(Math.floor(minVal)).padStart(2, '0')}:${String(Math.floor(simTickVal % 60)).padStart(2, '0')}Z`;
+  const last = unit.history[unit.history.length - 1];
+  if (last && last.type === type && last.headline === headline && (simTickVal - last.simTick < 10)) {
+    return;
+  }
+  unit.history.push({
+    id: `hist-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    timestamp: timeStr,
+    simTick: simTickVal,
+    type,
+    headline,
+    detail
+  });
+  if (unit.history.length > 35) {
+    unit.history = unit.history.slice(-35);
+  }
 }
 
 const SIERRA_RANGE_POLY: [number, number][] = [
@@ -1103,6 +1400,9 @@ export default function ProjectBrinkApp() {
   const [airSorties, setAirSorties] = useState<AirSortie[]>([]);
   const [samMissiles, setSamMissiles] = useState<SamMissile[]>([]);
   const [artilleryShells, setArtilleryShells] = useState<ArtilleryShell[]>([]);
+  const [torpedoes, setTorpedoes] = useState<Torpedo[]>([]);
+  const [sonarPings, setSonarPings] = useState<SonarPing[]>([]);
+  const [depthCharges, setDepthCharges] = useState<DepthCharge[]>([]);
   const [visualEffects, setVisualEffects] = useState<VisualEffect[]>([]);
   const [bridges, setBridges] = useState<Bridge[]>(INITIAL_BRIDGES);
   const [controlNodes, setControlNodes] = useState<ControlNode[]>(INITIAL_CONTROL_NODES);
@@ -1110,6 +1410,7 @@ export default function ProjectBrinkApp() {
   const [factions, setFactions] = useState<Record<FactionId, FactionInfo>>(FACTION_DEFINITIONS);
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
   const [selectedAirbaseId, setSelectedAirbaseId] = useState<string | null>(null);
+  const [unitHistoryFilter, setUnitHistoryFilter] = useState<'ALL' | 'COMBAT' | 'ORDERS' | 'WEATHER' | 'NAVAL'>('ALL');
 
   // Unification Event
   const [unifiedState, setUnifiedState] = useState<boolean>(false);
@@ -1747,6 +2048,9 @@ export default function ProjectBrinkApp() {
               }
             }
 
+            // 0. WEATHER & TACTICAL DEBUFFS CALCULATION
+            const debuffs: Array<{ type: string; label: string; desc: string }> = [];
+
             // Dynamic Terrain calculation
             const terrainInfo = getTerrainAt(u.x, u.y, bridges);
             let speedMultiplier = 1.0;
@@ -1764,6 +2068,49 @@ export default function ProjectBrinkApp() {
               }
             }
 
+            // Monsoon Storm Front tactical debuff
+            const monsoon = simWorldRef.current.warRoom.monsoon;
+            const distToMonsoon = monsoon ? distance(u.x, u.y, monsoon.x, monsoon.y) : Infinity;
+            if (monsoon && distToMonsoon <= monsoon.radius) {
+              debuffs.push({
+                type: 'MONSOON',
+                label: 'MONSOON SQUALL',
+                desc: 'Severe gale force squall & downpour. Movement -30%, Sensor vision -50%, reload dispersion.'
+              });
+              speedMultiplier *= 0.70;
+              fuelDrainMultiplier *= 1.30;
+              if (!u.activeDebuffs?.some(d => d.type === 'MONSOON')) {
+                appendUnitHistory(u, 'WEATHER', 'MONSOON SQUALL ENCOUNTER', 'Entered severe tropical monsoon storm front. Speed cut by 30%, radar detection reduced by 50%.', simTick, simHour, simMinute);
+              }
+            }
+
+            // Mud Alluvial Silt debuff
+            if (terrainInfo.type === 'MUD') {
+              debuffs.push({
+                type: 'MUD',
+                label: 'MUD BOGGED',
+                desc: 'Deep alluvial silt. Movement speed -20%, fuel drain +25%.'
+              });
+              if (!u.activeDebuffs?.some(d => d.type === 'MUD')) {
+                appendUnitHistory(u, 'WEATHER', 'BOGGED IN ALLUVIAL SILT', 'Tracks and chassis sinking into deep mud. Movement rate degraded, fuel consumption increased.', simTick, simHour, simMinute);
+              }
+            }
+
+            // Night Darkness Obscuration check
+            const isNight = simHour < 6 || simHour >= 20;
+            if (isNight) {
+              const isLitByFlare = simWorldRef.current.warRoom.activeFlares?.some(f => distance(u.x, u.y, f.x, f.y) <= f.radius);
+              if (!isLitByFlare) {
+                debuffs.push({
+                  type: 'NIGHT',
+                  label: 'NIGHT OBSCURATION',
+                  desc: 'Zero-illumination blackout. Target acquisition range and accuracy diminished.'
+                });
+              }
+            }
+
+            u.activeDebuffs = debuffs;
+
             // Fuel depletion
             if (u.fuel > 0 && (u.vx !== 0 || u.vy !== 0)) {
               u.fuel = Math.max(0, u.fuel - dt * 0.15 * fuelDrainMultiplier);
@@ -1777,7 +2124,7 @@ export default function ProjectBrinkApp() {
               u.components = { hull: u.strength, engine: 100, weapons: 100 };
             }
 
-            // 1. DESIGNATED REPAIR ZONE OVERHAUL
+            // 1. DESIGNATED REPAIR ZONE & NAVAL DRYDOCK OVERHAUL
             const depot = repairZones.find(rz =>
               rz.factionId === u.factionId || (u.factionId === 'unified' && (rz.factionId === 'loyalists' || rz.factionId === 'rebels'))
             );
@@ -1793,6 +2140,15 @@ export default function ProjectBrinkApp() {
               u.fuel = Math.min(100, u.fuel + dt * 14);
               u.morale = Math.min(100, u.morale + dt * 10);
 
+              // Naval Base Drydock re-arming & carrier aircraft replenishment
+              if (depot.isNavalBase || u.isNaval) {
+                if (u.type === 'carrier') {
+                  const maxPlanes = u.carrierMaxAircraft || 10;
+                  u.carrierAircraft = Math.min(maxPlanes, (u.carrierAircraft || 0) + dt * 0.4);
+                }
+                u.torpedoCooldown = Math.max(0, (u.torpedoCooldown || 0) + dt * 2);
+              }
+
               if (u.components.hull > 35) u.isHullBreached = false;
               if (u.components.engine > 40) u.isEngineDisabled = false;
               if (u.components.weapons > 40) u.isWeaponJammed = false;
@@ -1804,6 +2160,7 @@ export default function ProjectBrinkApp() {
                 u.isHullBreached = false;
                 u.isEngineDisabled = false;
                 u.isWeaponJammed = false;
+                appendUnitHistory(u, 'ORDERS', 'DRYDOCK OVERHAUL COMPLETE', `Full mechanical & ordnance replenishment certified at ${depot.name}.`, simTick, simHour, simMinute);
               }
             } else {
               u.isUnderRepair = false;
@@ -1882,7 +2239,7 @@ export default function ProjectBrinkApp() {
 
                   const veteranMod = (u.veteran || u.kills >= 5) ? 1.35 : (1.0 + Math.min(0.3, (u.kills || 0) * 0.06));
 
-                  const baseDamage = u.type === 'armor' ? 14 : u.type === 'mechanized' ? 10 : 7;
+                  const baseDamage = u.type === 'armor' ? 14 : u.type === 'carrier' ? 18 : u.type === 'destroyer' ? 15 : u.type === 'submarine' ? 16 : u.type === 'mechanized' ? 10 : 7;
                   const totalDamage = baseDamage * damageMultiplier * terrainAtkMod * terrainDefMod * (u.strength / 100) * veteranMod;
 
                   // Apply component damage to closestEnemy
@@ -1905,6 +2262,8 @@ export default function ProjectBrinkApp() {
                   closestEnemy.strength = Math.round(closestEnemy.components.hull);
                   closestEnemy.morale = Math.max(0, closestEnemy.morale - (isFlankStrike ? 14 : 5));
 
+                  appendUnitHistory(u, 'COMBAT', `ENGAGED ${closestEnemy.name.toUpperCase()}`, `${isFlankStrike ? 'FLANKING AMBUSH' : 'Salvo fire'} landed dealing ${Math.round(totalDamage)} damage.`, simTick, simHour, simMinute);
+
                   if (isFlankStrike) {
                     closestEnemy.lastFlanked = true;
                     audioSys.playFlankAlarm();
@@ -1912,13 +2271,155 @@ export default function ProjectBrinkApp() {
 
                   if (closestEnemy.strength <= 0) {
                     u.kills += 1;
-                    if (u.kills >= 5) {
+                    appendUnitHistory(u, 'COMBAT', `TARGET DESTROYED: ${closestEnemy.name.toUpperCase()}`, `Confirmed kill recorded. Total combat victories: ${u.kills}.`, simTick, simHour, simMinute);
+                    if (u.kills >= 5 && !u.veteran) {
                       u.veteran = true;
                       u.maxStrength = Math.min(140, 100 + (u.kills - 4) * 4);
                       u.strength = Math.min(u.maxStrength, u.strength + 20);
                       u.morale = Math.min(100, u.morale + 20);
+                      appendUnitHistory(u, 'PROMOTION', 'VETERAN STATUS AWARDED', 'Battlefield elite qualification achieved (+35% combat efficiency, +20 fortitude).', simTick, simHour, simMinute);
                     }
                   }
+                }
+              }
+            }
+
+            // 2b. AUTONOMOUS NAVAL OPERATIONS (Carrier Strike, Submarine Torpedo, Destroyer ASW)
+            if (u.type === 'carrier' && u.strength > 0) {
+              u.reloadTimer = (u.reloadTimer || 0) + dt;
+              if ((u.carrierAircraft ?? 6) > 0 && u.reloadTimer >= 13.0 && isAtWar && closestEnemy && minDist < 450) {
+                u.reloadTimer = 0;
+                u.carrierAircraft = Math.max(0, (u.carrierAircraft ?? 6) - 1);
+                const sortieCallsign = `VF-${Math.floor(Math.random() * 80 + 10)} CAG STRIKE`;
+                setAirSorties(prevSorties => [
+                  ...prevSorties,
+                  {
+                    id: `carrier-sortie-${Date.now()}-${Math.random()}`,
+                    callsign: sortieCallsign,
+                    factionId: u.factionId,
+                    role: 'CAS',
+                    x: u.x,
+                    y: u.y,
+                    altitude: 600,
+                    heading: (Math.atan2(closestEnemy.y - u.y, closestEnemy.x - u.x) * 180) / Math.PI,
+                    speed: 2.3,
+                    targetX: closestEnemy.x,
+                    targetY: closestEnemy.y,
+                    fuel: 100,
+                    maxFuel: 100,
+                    airbaseId: u.id,
+                    status: 'SCRAMBLING',
+                    trail: [{ x: u.x, y: u.y }]
+                  }
+                ]);
+                audioSys.playArtillery();
+                appendUnitHistory(u, 'NAVAL', 'CARRIER AIR WING LAUNCH', `Catapult launched strike sortie [${sortieCallsign}] targeting ${closestEnemy.name}.`, simTick, simHour, simMinute);
+              }
+            }
+
+            if (u.type === 'submarine' && u.strength > 0) {
+              u.torpedoCooldown = (u.torpedoCooldown || 0) + dt;
+              if (u.isSubmerged === undefined) u.isSubmerged = true;
+
+              if (isAtWar && u.torpedoCooldown >= 7.5 && closestEnemy && minDist <= (u.range + 40)) {
+                u.torpedoCooldown = 0;
+                setTorpedoes(prev => [
+                  ...prev,
+                  {
+                    id: `torp-${Date.now()}-${Math.random()}`,
+                    factionId: u.factionId,
+                    sourceUnitId: u.id,
+                    targetUnitId: closestEnemy.id,
+                    x: u.x,
+                    y: u.y,
+                    startX: u.x,
+                    startY: u.y,
+                    targetX: closestEnemy.x,
+                    targetY: closestEnemy.y,
+                    speed: 1.8,
+                    heading: (Math.atan2(closestEnemy.y - u.y, closestEnemy.x - u.x) * 180) / Math.PI,
+                    damage: 48,
+                    life: 7.5,
+                    trail: [{ x: u.x, y: u.y }]
+                  }
+                ]);
+                setVisualEffects(v => [
+                  ...v,
+                  {
+                    id: `v-torp-wake-${Date.now()}-${Math.random()}`,
+                    type: 'TORPEDO_WAKE',
+                    x: u.x,
+                    y: u.y,
+                    radius: 12,
+                    color: '#38bdf8',
+                    duration: 1.5,
+                    elapsed: 0
+                  }
+                ]);
+                appendUnitHistory(u, 'NAVAL', 'TORPEDO SALVO FIRED', `Fired Mark 37 acoustic homing torpedo at ${closestEnemy.name}.`, simTick, simHour, simMinute);
+              }
+            }
+
+            if (u.type === 'destroyer' && u.strength > 0) {
+              u.sonarCooldown = (u.sonarCooldown || 0) + dt;
+              if (u.sonarCooldown >= 7.0) {
+                u.sonarCooldown = 0;
+                // Emit active sonar ping
+                setSonarPings(prev => [
+                  ...prev,
+                  {
+                    id: `ping-${Date.now()}-${Math.random()}`,
+                    factionId: u.factionId,
+                    sourceUnitId: u.id,
+                    x: u.x,
+                    y: u.y,
+                    radius: 8,
+                    maxRadius: 210,
+                    duration: 3.2,
+                    elapsed: 0
+                  }
+                ]);
+
+                // Check for submerged enemy submarines in sonar radius
+                const enemySub = prevUnits.find(other => 
+                  other.type === 'submarine' && 
+                  other.factionId !== u.factionId && 
+                  other.strength > 0 && 
+                  distance(u.x, u.y, other.x, other.y) <= 210
+                );
+
+                if (enemySub) {
+                  enemySub.isSubmerged = false; // Reveal submarine!
+                  // Launch hedgehog depth charge attack
+                  setDepthCharges(prev => [
+                    ...prev,
+                    {
+                      id: `dc-${Date.now()}-1`,
+                      factionId: u.factionId,
+                      sourceUnitId: u.id,
+                      x: u.x,
+                      y: u.y,
+                      targetX: enemySub.x + (Math.random() * 24 - 12),
+                      targetY: enemySub.y + (Math.random() * 24 - 12),
+                      progress: 0,
+                      duration: 2.2,
+                      damage: 42
+                    },
+                    {
+                      id: `dc-${Date.now()}-2`,
+                      factionId: u.factionId,
+                      sourceUnitId: u.id,
+                      x: u.x,
+                      y: u.y,
+                      targetX: enemySub.x + (Math.random() * 32 - 16),
+                      targetY: enemySub.y + (Math.random() * 32 - 16),
+                      progress: 0,
+                      duration: 2.6,
+                      damage: 42
+                    }
+                  ]);
+                  appendUnitHistory(u, 'NAVAL', 'ASW CONTACT ACQUIRED', `Active sonar localized submerged ${enemySub.name}. Launched Hedgehog depth charge mortar spread.`, simTick, simHour, simMinute);
+                  appendUnitHistory(enemySub, 'NAVAL', 'SONAR LOCK DETECTED', `Targeted by active destroyer sonar ping from ${u.name}! Submerged stealth compromised.`, simTick, simHour, simMinute);
                 }
               }
             }
@@ -2278,15 +2779,32 @@ export default function ProjectBrinkApp() {
             }
 
             // RTB Arrival
-            const distToBase = airbases.find(b => b.id === s.airbaseId)
-              ? distance(s.x, s.y, airbases.find(b => b.id === s.airbaseId)!.x, airbases.find(b => b.id === s.airbaseId)!.y)
-              : Infinity;
+            const landAirbase = airbases.find(b => b.id === s.airbaseId);
+            const distToBase = landAirbase ? distance(s.x, s.y, landAirbase.x, landAirbase.y) : Infinity;
 
             if (s.status === 'RTB' && distToBase < 20) {
               setAirbases(abList =>
                 abList.map(ab => (ab.id === s.airbaseId ? { ...ab, readyAircraft: Math.min(ab.totalCapacity, ab.readyAircraft + 1) } : ab))
               );
-              continue; // sortie completed
+              continue; // sortie completed at land airbase
+            }
+
+            // Carrier Flight Deck Recovery
+            const carrierUnit = units.find(u => u.id === s.airbaseId && u.type === 'carrier');
+            if (carrierUnit && s.status === 'RTB') {
+              s.targetX = carrierUnit.x;
+              s.targetY = carrierUnit.y;
+              if (distance(s.x, s.y, carrierUnit.x, carrierUnit.y) < 28) {
+                setUnits(currUnits => currUnits.map(u => {
+                  if (u.id === carrierUnit.id) {
+                    const newCount = Math.min(u.carrierMaxAircraft || 10, (u.carrierAircraft || 0) + 1);
+                    appendUnitHistory(u, 'NAVAL', 'TRAP RECOVERY COMPLETED', `CAG Strike flight recovered safely on flight deck. Ready air wing: ${newCount}.`, simTick, simHour, simMinute);
+                    return { ...u, carrierAircraft: newCount };
+                  }
+                  return u;
+                }));
+                continue; // sortie trapped on carrier deck
+              }
             }
 
             // SAM Air Defense Interception Trigger
@@ -2364,6 +2882,151 @@ export default function ProjectBrinkApp() {
             }
           }
           return nextMissiles;
+        });
+
+        // 4b. UPDATE TORPEDOES (Acoustic Homing & Cavitation Wake)
+        setTorpedoes(prevTorpedoes => {
+          const nextTorpedoes: Torpedo[] = [];
+          for (const t of prevTorpedoes) {
+            t.life -= dt;
+            const spd = t.speed * 42;
+            t.x += Math.cos((t.heading * Math.PI) / 180) * spd * dt;
+            t.y += Math.sin((t.heading * Math.PI) / 180) * spd * dt;
+            t.trail.push({ x: t.x, y: t.y });
+            if (t.trail.length > 12) t.trail.shift();
+
+            // Check hit against target unit or any hostile naval vessel within 24px
+            const hitUnit = units.find(u => u.factionId !== t.factionId && u.strength > 0 && distance(t.x, t.y, u.x, u.y) < 24);
+            if (hitUnit || t.life <= 0) {
+              if (hitUnit) {
+                // Torpedo detonation!
+                setVisualEffects(v => [
+                  ...v,
+                  {
+                    id: `v-torp-hit-${Date.now()}-${Math.random()}`,
+                    type: 'WATER_GEYSER',
+                    x: t.x,
+                    y: t.y,
+                    radius: 38,
+                    color: '#38bdf8',
+                    duration: 1.4,
+                    elapsed: 0
+                  },
+                  {
+                    id: `v-torp-exp-${Date.now()}-${Math.random()}`,
+                    type: 'EXPLOSION',
+                    x: t.x,
+                    y: t.y,
+                    radius: 40,
+                    color: '#0284c7',
+                    duration: 1.0,
+                    elapsed: 0
+                  }
+                ]);
+                audioSys.playArtillery();
+
+                setUnits(currUnits => currUnits.map(u => {
+                  if (u.id === hitUnit.id) {
+                    const nextHull = Math.max(0, (u.components?.hull ?? u.strength) - t.damage);
+                    const components = u.components ? {
+                      ...u.components,
+                      hull: nextHull,
+                      engine: Math.max(0, u.components.engine - 35)
+                    } : { hull: nextHull, engine: 65, weapons: 80 };
+
+                    appendUnitHistory(u, 'NAVAL', 'TORPEDO IMPACT DETONATION', `Severe hull breach from acoustic torpedo impact! Flooding & engine disabled.`, simTick, simHour, simMinute);
+                    return {
+                      ...u,
+                      strength: Math.round(nextHull),
+                      components,
+                      isHullBreached: true,
+                      isEngineDisabled: true,
+                      morale: Math.max(0, u.morale - 30)
+                    };
+                  }
+                  return u;
+                }));
+              }
+              continue; // torpedo consumed
+            }
+            nextTorpedoes.push(t);
+          }
+          return nextTorpedoes;
+        });
+
+        // 4c. UPDATE SONAR PINGS
+        setSonarPings(prevPings => {
+          return prevPings
+            .map(p => ({
+              ...p,
+              elapsed: p.elapsed + dt,
+              radius: ((p.elapsed + dt) / p.duration) * p.maxRadius
+            }))
+            .filter(p => p.elapsed < p.duration);
+        });
+
+        // 4d. UPDATE DEPTH CHARGES (ASW Hedgehogs & Underwater Concussion Blasts)
+        setDepthCharges(prevDCs => {
+          const nextDCs: DepthCharge[] = [];
+          for (const dc of prevDCs) {
+            dc.progress += dt / dc.duration;
+            dc.x = dc.x + (dc.targetX - dc.x) * (dt / dc.duration);
+            dc.y = dc.y + (dc.targetY - dc.y) * (dt / dc.duration);
+
+            if (dc.progress >= 1.0) {
+              // Depth charge detonated!
+              setVisualEffects(v => [
+                ...v,
+                {
+                  id: `v-dc-exp-${Date.now()}-${Math.random()}`,
+                  type: 'DEPTH_CHARGE_EXPLOSION',
+                  x: dc.targetX,
+                  y: dc.targetY,
+                  radius: 36,
+                  color: '#38bdf8',
+                  duration: 1.2,
+                  elapsed: 0
+                },
+                {
+                  id: `v-dc-geyser-${Date.now()}-${Math.random()}`,
+                  type: 'WATER_GEYSER',
+                  x: dc.targetX,
+                  y: dc.targetY,
+                  radius: 42,
+                  color: '#bae6fd',
+                  duration: 1.6,
+                  elapsed: 0
+                }
+              ]);
+              audioSys.playArtillery();
+
+              // Damage submerged submarines in shockwave radius (45px)
+              setUnits(currUnits => currUnits.map(u => {
+                if (u.type === 'submarine' && u.factionId !== dc.factionId && distance(u.x, u.y, dc.targetX, dc.targetY) < 45) {
+                  const nextHull = Math.max(0, (u.components?.hull ?? u.strength) - dc.damage);
+                  const components = u.components ? {
+                    ...u.components,
+                    hull: nextHull,
+                    engine: Math.max(0, u.components.engine - 40)
+                  } : { hull: nextHull, engine: 50, weapons: 70 };
+
+                  appendUnitHistory(u, 'NAVAL', 'DEPTH CHARGE SHOCKWAVE HIT', `Underwater concussion compressed pressure hull! Forced emergency blow surfacing.`, simTick, simHour, simMinute);
+                  return {
+                    ...u,
+                    strength: Math.round(nextHull),
+                    components,
+                    isSubmerged: false, // forced to surface
+                    isHullBreached: true,
+                    morale: Math.max(0, u.morale - 35)
+                  };
+                }
+                return u;
+              }));
+              continue;
+            }
+            nextDCs.push(dc);
+          }
+          return nextDCs;
         });
 
         // 5. UPDATE CONTROL NODES & CAPTURE
@@ -2453,6 +3116,19 @@ export default function ProjectBrinkApp() {
                 }
                 return rz;
               }));
+            },
+            (targetFaction, amount) => {
+              // Covert financial support
+              setEconomyState(prev => {
+                const nextRes = { ...prev.factionResources };
+                if (nextRes[targetFaction]) {
+                  nextRes[targetFaction] = {
+                    ...nextRes[targetFaction],
+                    treasury: nextRes[targetFaction].treasury + amount
+                  };
+                }
+                return { ...prev, factionResources: nextRes };
+              });
             }
           );
           setDiplomaticLedger(updatedLedger);
@@ -3007,6 +3683,41 @@ export default function ProjectBrinkApp() {
         ctx.moveTo(0, 3);
         ctx.lineTo(0, -6);
         ctx.stroke();
+      } else if (u.type === 'carrier') {
+        // Aircraft Carrier Flight Deck Angled Striping & Superstructure
+        ctx.beginPath();
+        ctx.moveTo(-w / 2 + 4, -h / 2 + 3);
+        ctx.lineTo(w / 2 - 4, -h / 2 + 3);
+        ctx.moveTo(-w / 2 + 4, h / 2 - 3);
+        ctx.lineTo(w / 2 - 4, h / 2 - 3);
+        ctx.stroke();
+        ctx.fillStyle = fColor;
+        ctx.fillRect(w / 2 - 7, -h / 2 + 4, 4, 6); // island tower
+        ctx.font = 'bold 7px monospace';
+        ctx.fillText('CV', -4, 3);
+      } else if (u.type === 'destroyer') {
+        // Destroyer Warship Hull & Twin Turrets
+        ctx.beginPath();
+        ctx.moveTo(-w / 2 + 3, 0);
+        ctx.lineTo(w / 2 - 3, 0);
+        ctx.arc(-5, 0, 2.5, 0, Math.PI * 2);
+        ctx.arc(5, 0, 2.5, 0, Math.PI * 2);
+        ctx.stroke();
+      } else if (u.type === 'submarine') {
+        // Submarine Cigar Hull & Conning Tower
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 9, 3.5, 0, 0, Math.PI * 2);
+        ctx.moveTo(0, -3.5);
+        ctx.lineTo(0, -6.5);
+        ctx.stroke();
+        if (u.isSubmerged) {
+          ctx.strokeStyle = '#38bdf8';
+          ctx.setLineDash([2, 2]);
+          ctx.beginPath();
+          ctx.arc(0, 0, 15, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
       }
 
       // Status Bars: Strength (Green), Fuel (Amber), Morale (Cyan)
@@ -3027,6 +3738,27 @@ export default function ProjectBrinkApp() {
         ctx.fillStyle = '#ef4444';
         ctx.font = 'bold 9px monospace';
         ctx.fillText('! FLANK !', -20, -h / 2 - 4);
+      }
+
+      // Active Tactical Weather & Environment Debuff Badges
+      if (u.activeDebuffs && u.activeDebuffs.length > 0) {
+        ctx.save();
+        ctx.font = 'bold 7px monospace';
+        let debuffOffsetY = -h / 2 - 14;
+        u.activeDebuffs.forEach(deb => {
+          if (deb.type === 'MONSOON') {
+            ctx.fillStyle = '#38bdf8';
+            ctx.fillText('☁ SQUALL -30%', -w / 2 - 8, debuffOffsetY);
+          } else if (deb.type === 'MUD') {
+            ctx.fillStyle = '#f59e0b';
+            ctx.fillText('≈ MUD BOGGED', -w / 2 - 8, debuffOffsetY);
+          } else if (deb.type === 'NIGHT') {
+            ctx.fillStyle = '#818cf8';
+            ctx.fillText('☾ NIGHT', -w / 2 - 8, debuffOffsetY);
+          }
+          debuffOffsetY -= 9;
+        });
+        ctx.restore();
       }
 
       // Veteran Chevron Indicator (> 5 kills)
@@ -3278,7 +4010,65 @@ export default function ProjectBrinkApp() {
       ctx.restore();
     });
 
-    // 11. VISUAL EFFECTS (Explosions, Napalm Carpets, Smoke)
+    // 10b. ACOUSTIC TORPEDOES & CAVITATION BUBBLE WAKES
+    torpedoes.forEach(t => {
+      ctx.save();
+      if (t.trail.length > 1) {
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.55)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([2, 3]);
+        ctx.beginPath();
+        ctx.moveTo(t.trail[0].x, t.trail[0].y);
+        for (let i = 1; i < t.trail.length; i++) {
+          ctx.lineTo(t.trail[i].x, t.trail[i].y);
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      ctx.translate(t.x, t.y);
+      ctx.rotate((t.heading * Math.PI) / 180);
+      ctx.fillStyle = '#0284c7';
+      ctx.fillRect(-6, -2, 12, 4);
+      ctx.fillStyle = '#38bdf8';
+      ctx.beginPath();
+      ctx.arc(6, 0, 2, -Math.PI / 2, Math.PI / 2);
+      ctx.fill();
+      ctx.restore();
+    });
+
+    // 10c. SONAR PINGS (Acoustic Sonar Wavefronts)
+    sonarPings.forEach(p => {
+      ctx.save();
+      const alpha = Math.max(0, 1 - p.elapsed / p.duration);
+      ctx.strokeStyle = `rgba(56, 189, 248, ${alpha * 0.75})`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Inner faint harmonic ring
+      ctx.strokeStyle = `rgba(186, 230, 253, ${alpha * 0.35})`;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.radius * 0.65, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    });
+
+    // 10d. ASW DEPTH CHARGES (Mortar Projectiles & Sinking Barrels)
+    depthCharges.forEach(dc => {
+      ctx.save();
+      ctx.fillStyle = '#0284c7';
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(dc.x, dc.y, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    });
+
+    // 11. VISUAL EFFECTS (Explosions, Napalm Carpets, Water Geysers)
     visualEffects.forEach(ef => {
       ctx.save();
       const progress = ef.elapsed / ef.duration;
@@ -3302,6 +4092,27 @@ export default function ProjectBrinkApp() {
         ctx.strokeStyle = `rgba(254, 215, 170, ${alpha})`;
         ctx.lineWidth = 1.5;
         ctx.stroke();
+      } else if (ef.type === 'DEPTH_CHARGE_EXPLOSION') {
+        const curRadius = ef.radius * (0.4 + progress * 0.6);
+        const grad = ctx.createRadialGradient(ef.x, ef.y, 0, ef.x, ef.y, curRadius);
+        grad.addColorStop(0, `rgba(186, 230, 253, ${alpha})`);
+        grad.addColorStop(0.6, `rgba(14, 165, 233, ${alpha * 0.7})`);
+        grad.addColorStop(1, `rgba(2, 132, 199, 0)`);
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(ef.x, ef.y, curRadius, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (ef.type === 'WATER_GEYSER') {
+        const curRadius = ef.radius * (0.2 + progress * 0.8);
+        ctx.strokeStyle = `rgba(186, 230, 253, ${alpha})`;
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.arc(ef.x, ef.y, curRadius, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = `rgba(56, 189, 248, ${alpha * 0.4})`;
+        ctx.beginPath();
+        ctx.arc(ef.x, ef.y, curRadius * 0.7, 0, Math.PI * 2);
+        ctx.fill();
       }
       ctx.restore();
     });
@@ -3474,7 +4285,7 @@ export default function ProjectBrinkApp() {
         ctx.restore();
       }
     });
-  }, [airSorties, airbases, artilleryShells, bridges, controlNodes, crtTheme, diplomaticLedger, factions, fowPerspective, mapDetailMode, reconSweepZones, repairZones, samMissiles, selectedUnitId, showOverlays, simTick, units, visualEffects]);
+  }, [airSorties, airbases, artilleryShells, bridges, controlNodes, crtTheme, depthCharges, diplomaticLedger, factions, fowPerspective, mapDetailMode, reconSweepZones, repairZones, samMissiles, selectedUnitId, showOverlays, simTick, sonarPings, torpedoes, units, visualEffects]);
 
   /* =========================================================================
      INTERACTION: CLICK INSPECTOR ON CANVAS
@@ -4667,12 +5478,188 @@ export default function ProjectBrinkApp() {
                           🤖 AI AUTONOMY
                         </button>
                       </div>
+
+                      {/* Naval Specific Action Directives */}
+                      {(selectedUnit.type === 'carrier' || selectedUnit.type === 'submarine' || selectedUnit.type === 'destroyer') && (
+                        <div className="pt-1 border-t border-cyan-900/50 space-y-1">
+                          <div className="text-[8px] uppercase tracking-wider text-cyan-400 font-bold">NAVAL ASSET DIRECTIVES</div>
+                          <div className="grid grid-cols-2 gap-1">
+                            {selectedUnit.type === 'carrier' && (
+                              <button
+                                onClick={() => {
+                                  if ((selectedUnit.carrierAircraft || 0) > 0) {
+                                    setUnits(prev => prev.map(u => u.id === selectedUnit.id ? {
+                                      ...u,
+                                      carrierAircraft: Math.max(0, (u.carrierAircraft || 1) - 1)
+                                    } : u));
+                                    appendUnitHistory(selectedUnit, 'NAVAL', 'CAG ALPHA STRIKE SCRAMBLE', `Catapult 1 launched A-4 Skyhawk flight.`, simTick, simHour, simMinute);
+                                    setAirSorties(prev => [
+                                      ...prev,
+                                      {
+                                        id: `cag-strike-${Date.now()}-${Math.random()}`,
+                                        factionId: selectedUnit.factionId,
+                                        airbaseId: selectedUnit.id,
+                                        callsign: 'CAG-01 ALPHA',
+                                        role: 'CAS',
+                                        x: selectedUnit.x,
+                                        y: selectedUnit.y,
+                                        altitude: 450,
+                                        targetX: 680,
+                                        targetY: 380,
+                                        speed: 3.2,
+                                        heading: selectedUnit.heading,
+                                        fuel: 100,
+                                        maxFuel: 100,
+                                        status: 'EN_ROUTE',
+                                        trail: [{ x: selectedUnit.x, y: selectedUnit.y }]
+                                      }
+                                    ]);
+                                    audioSys.playFlankAlarm();
+                                  }
+                                }}
+                                className="px-1.5 py-1 text-[8px] font-bold border border-cyan-500/60 bg-cyan-950/30 hover:bg-cyan-900/60 text-cyan-300 text-left"
+                              >
+                                ⚓ LAUNCH CAG ({selectedUnit.carrierAircraft || 0})
+                              </button>
+                            )}
+
+                            {selectedUnit.type === 'submarine' && (
+                              <>
+                                <button
+                                  onClick={() => {
+                                    setUnits(prev => prev.map(u => {
+                                      if (u.id === selectedUnit.id) {
+                                        const nextState = !u.isSubmerged;
+                                        appendUnitHistory(u, 'NAVAL', nextState ? 'SUBMERGED TO PERISCOPE DEPTH' : 'EMERGENCY SURFACE', nextState ? 'Silent running enabled.' : 'Diesel snorkel engines running.', simTick, simHour, simMinute);
+                                        return { ...u, isSubmerged: nextState };
+                                      }
+                                      return u;
+                                    }));
+                                  }}
+                                  className="px-1.5 py-1 text-[8px] font-bold border border-cyan-500/60 bg-cyan-950/30 hover:bg-cyan-900/60 text-cyan-300 text-left"
+                                >
+                                  {selectedUnit.isSubmerged ? '⬆ SURFACE BOAT' : '⬇ DIVE SUBMERGED'}
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    const enemyNaval = units.find(other => other.id !== selectedUnit.id && other.factionId !== selectedUnit.factionId && other.strength > 0 && (other.type === 'carrier' || other.type === 'destroyer' || other.type === 'submarine'));
+                                    if (enemyNaval) {
+                                      const torpAngle = (Math.atan2(enemyNaval.y - selectedUnit.y, enemyNaval.x - selectedUnit.x) * 180) / Math.PI;
+                                      setTorpedoes(prev => [
+                                        ...prev,
+                                        {
+                                          id: `torp-man-${Date.now()}`,
+                                          factionId: selectedUnit.factionId,
+                                          x: selectedUnit.x,
+                                          y: selectedUnit.y,
+                                          targetUnitId: enemyNaval.id,
+                                          speed: 2.8,
+                                          heading: torpAngle,
+                                          damage: 42,
+                                          life: 5.0,
+                                          trail: [{ x: selectedUnit.x, y: selectedUnit.y }]
+                                        }
+                                      ]);
+                                      appendUnitHistory(selectedUnit, 'NAVAL', 'TORPEDO TUBE 1 FIRED', `Acoustic homing torpedo launched against ${enemyNaval.name.toUpperCase()}.`, simTick, simHour, simMinute);
+                                      audioSys.playArtillery();
+                                    }
+                                  }}
+                                  className="px-1.5 py-1 text-[8px] font-bold border border-red-500/60 bg-red-950/30 hover:bg-red-900/60 text-red-300 text-left"
+                                >
+                                  💥 FIRE TORPEDO
+                                </button>
+                              </>
+                            )}
+
+                            {selectedUnit.type === 'destroyer' && (
+                              <>
+                                <button
+                                  onClick={() => {
+                                    setSonarPings(prev => [
+                                      ...prev,
+                                      {
+                                        id: `ping-${Date.now()}`,
+                                        x: selectedUnit.x,
+                                        y: selectedUnit.y,
+                                        radius: 10,
+                                        maxRadius: 280,
+                                        duration: 3.5,
+                                        elapsed: 0,
+                                        factionId: selectedUnit.factionId
+                                      }
+                                    ]);
+                                    appendUnitHistory(selectedUnit, 'NAVAL', 'ACTIVE SONAR SWEEP', 'Transmitting SQS-23 active ping array across sector.', simTick, simHour, simMinute);
+                                    audioSys.playTeletype();
+                                  }}
+                                  className="px-1.5 py-1 text-[8px] font-bold border border-cyan-500/60 bg-cyan-950/30 hover:bg-cyan-900/60 text-cyan-300 text-left"
+                                >
+                                  📡 ACTIVE SONAR
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    const enemySub = units.find(other => other.type === 'submarine' && other.factionId !== selectedUnit.factionId && distance(selectedUnit.x, selectedUnit.y, other.x, other.y) < 180);
+                                    if (enemySub) {
+                                      setDepthCharges(prev => [
+                                        ...prev,
+                                        {
+                                          id: `dc-${Date.now()}`,
+                                          factionId: selectedUnit.factionId,
+                                          x: selectedUnit.x,
+                                          y: selectedUnit.y,
+                                          targetX: enemySub.x,
+                                          targetY: enemySub.y,
+                                          progress: 0,
+                                          duration: 1.5,
+                                          damage: 48
+                                        }
+                                      ]);
+                                      appendUnitHistory(selectedUnit, 'NAVAL', 'HEDGEHOG ASW PATTERN', `Fired 24-spigot depth charge salvo at suspected contact.`, simTick, simHour, simMinute);
+                                      audioSys.playArtillery();
+                                    }
+                                  }}
+                                  className="px-1.5 py-1 text-[8px] font-bold border border-amber-500/60 bg-amber-950/30 hover:bg-amber-900/60 text-amber-300 text-left"
+                                >
+                                  💣 HEDGEHOG ASW
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Unit Service Record & History Log */}
+                    <div className="pt-2 border-t border-[#1a2e1a] space-y-1">
+                      <div className="text-[9px] uppercase tracking-wider text-amber-400 font-bold flex justify-between">
+                        <span>UNIT SERVICE HISTORY LOG</span>
+                        <span className="text-[8px] text-neutral-400">({selectedUnit.history?.length || 0} LOGS)</span>
+                      </div>
+                      <div className="max-h-28 overflow-y-auto space-y-1 pr-1 border border-[#1a2e1a] p-1 bg-black/50">
+                        {(!selectedUnit.history || selectedUnit.history.length === 0) ? (
+                          <div className="text-[8px] text-neutral-500 italic p-1">No significant incidents logged yet. In standard deployment status.</div>
+                        ) : (
+                          selectedUnit.history.map(entry => (
+                            <div key={entry.id} className="text-[8px] border-b border-[#1a2e1a] pb-1 last:border-0 last:pb-0">
+                              <div className="flex justify-between items-center text-neutral-400">
+                                <span className={`font-bold ${
+                                  entry.type === 'COMBAT' ? 'text-red-400' :
+                                  entry.type === 'WEATHER' ? 'text-cyan-400' :
+                                  entry.type === 'PROMOTION' ? 'text-yellow-400' :
+                                  entry.type === 'NAVAL' ? 'text-sky-300' : 'text-emerald-400'
+                                }`}>[{entry.type}] {entry.headline}</span>
+                                <span>{entry.timestamp}</span>
+                              </div>
+                              <div className="text-neutral-300 font-mono">{entry.detail}</div>
+                            </div>
+                          ))
+                        )}
+                      </div>
                     </div>
 
                     {/* Flank Alert */}
                     <div className="bg-red-950/40 border border-red-800/60 p-1.5 text-[9px] text-red-300">
-                      <span className="font-bold text-red-400">FLANKING: </span>
-                      &gt;90° arrivals take 1.8x damage; rear ambushes inflict 2.4x criticals.
+                      <span className="font-bold text-red-400">TACTICAL DOCTRINE: </span>
+                      Flanking arcs inflict 1.8x damage; Monsoon squalls reduce speed and sensor detection.
                     </div>
                   </div>
                 ) : (
@@ -4916,7 +5903,7 @@ export default function ProjectBrinkApp() {
                       </div>
 
                       {/* Resources grid */}
-                      <div className="grid grid-cols-4 gap-1 text-[9px] font-mono text-center">
+                      <div className="grid grid-cols-6 gap-1 text-[9px] font-mono text-center">
                         <div className="p-1 bg-[#101b10] border border-[#1a2e1a]">
                           <div className="opacity-60 text-[8px]">OIL</div>
                           <div className="font-bold text-amber-400">{Math.round(eco.oil)}</div>
@@ -4932,6 +5919,14 @@ export default function ProjectBrinkApp() {
                         <div className="p-1 bg-[#101b10] border border-[#1a2e1a]">
                           <div className="opacity-60 text-[8px]">FUNDS</div>
                           <div className="font-bold text-yellow-300">${Math.round(eco.treasury)}</div>
+                        </div>
+                        <div className="p-1 bg-[#101b10] border border-[#1a2e1a]">
+                          <div className="opacity-60 text-[8px]">FOOD</div>
+                          <div className="font-bold text-green-300">{Math.round(eco.food)}</div>
+                        </div>
+                        <div className="p-1 bg-[#101b10] border border-[#1a2e1a]">
+                          <div className="opacity-60 text-[8px]">RARE E.</div>
+                          <div className="font-bold text-purple-300">{Math.round(eco.rareEarths)}</div>
                         </div>
                       </div>
 

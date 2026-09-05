@@ -102,40 +102,44 @@ Respond strictly in valid JSON matching this schema without code fences:
 }
 `;
 
-  // Use Gemini 3.5 Flash Lite (gemini-3.1-flash-lite)
+  // Use Gemini API with resilience fallback
   if (process.env.GEMINI_API_KEY) {
-    try {
-      const ai = new GoogleGenAI({
-        apiKey: process.env.GEMINI_API_KEY,
-        httpOptions: {
-          headers: {
-            "User-Agent": "aistudio-build",
+    const ai = new GoogleGenAI({
+      apiKey: process.env.GEMINI_API_KEY,
+      httpOptions: {
+        headers: {
+          "User-Agent": "aistudio-build",
+        },
+      },
+    });
+
+    const candidateModels = ["gemini-3.8-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"];
+
+    for (const modelName of candidateModels) {
+      try {
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: prompt,
+          config: {
+            responseMimeType: "application/json",
+            temperature: 0.75,
           },
-        },
-      });
+        });
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.1-flash-lite",
-        contents: prompt,
-        config: {
-          responseMimeType: "application/json",
-          temperature: 0.75,
-        },
-      });
-
-      if (response && response.text) {
-        let cleanText = response.text.trim();
-        if (cleanText.startsWith("```json")) {
-          cleanText = cleanText.replace(/^```json\s*/, "").replace(/\s*```$/, "");
-        } else if (cleanText.startsWith("```")) {
-          cleanText = cleanText.replace(/^```\s*/, "").replace(/\s*```$/, "");
+        if (response && response.text) {
+          let cleanText = response.text.trim();
+          if (cleanText.startsWith("```json")) {
+            cleanText = cleanText.replace(/^```json\s*/, "").replace(/\s*```$/, "");
+          } else if (cleanText.startsWith("```")) {
+            cleanText = cleanText.replace(/^```\s*/, "").replace(/\s*```$/, "");
+          }
+          const article = JSON.parse(cleanText);
+          article.model = modelName.toUpperCase();
+          return NextResponse.json(article);
         }
-        const article = JSON.parse(cleanText);
-        article.model = "GEMINI-3.5-FLASH-LITE";
-        return NextResponse.json(article);
+      } catch (err) {
+        console.info(`Newspaper dispatch generation on ${modelName} encountered transient limit, evaluating fallback:`, err instanceof Error ? err.message : String(err));
       }
-    } catch (err) {
-      console.warn("Newspaper Gemini generation failed, using period fallback:", err);
     }
   }
 

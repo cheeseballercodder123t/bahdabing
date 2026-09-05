@@ -12,9 +12,9 @@ export interface TerrainZone {
   polygon: [number, number][];
   labelPos: [number, number];
   description: string;
-  movementPenalty: Record<UnitType, number>; // multiplier, e.g. 0.8 = -20% speed
-  attackModifier: Record<UnitType, number>;   // attack damage multiplier
-  defenseModifier: Record<UnitType, number>;  // damage received multiplier, e.g. 0.6 = +40% defense
+  movementPenalty: Partial<Record<UnitType, number>>; // multiplier, e.g. 0.8 = -20% speed
+  attackModifier: Partial<Record<UnitType, number>>;   // attack damage multiplier
+  defenseModifier: Partial<Record<UnitType, number>>;  // damage received multiplier, e.g. 0.6 = +40% defense
   entrenchmentRate: number;                  // bonus rate multiplier
   concealment: boolean;                      // hides units from long-range vision
 }
@@ -416,24 +416,35 @@ export const TERRAIN_ZONES: TerrainZone[] = [
   }
 ];
 
+// Helper to check if coordinates are in water/sea zones
+export function isWaterSector(x: number, y: number): boolean {
+  // Western Ocean (Carrier strike group operating basin)
+  if (x <= 200 && y >= 220 && y <= 650) return true;
+  // Port Bella Deepwater Sound / Southern Ocean
+  if (x >= 860 && y >= 690) return true;
+  // Northern Sound / Volskan Sub Pen Fjord
+  if (x >= 1160 && y <= 240) return true;
+  // River line
+  const isNearRiverSpline =
+    (y < 180 && Math.abs(x - (510 - (y / 180) * 50)) < 24) ||
+    (y >= 180 && y < 520 && Math.abs(x - (460 + ((y - 180) / 340) * 60)) < 26) ||
+    (y >= 520 && y < 850 && Math.abs(x - (520 - ((y - 520) / 330) * 30)) < 26);
+  return isNearRiverSpline;
+}
+
 // Helper to determine terrain at any (x, y) coordinate
 export function getTerrainAt(
   x: number,
   y: number,
   bridges?: { isDestroyed: boolean; x: number; y: number }[]
 ): { type: TerrainType; zone?: TerrainZone; isRiver: boolean } {
-  // 1. River check (continuous spline around x = 520)
-  const isNearRiverSpline =
-    (y < 180 && Math.abs(x - (510 - (y / 180) * 50)) < 24) ||
-    (y >= 180 && y < 520 && Math.abs(x - (460 + ((y - 180) / 340) * 60)) < 26) ||
-    (y >= 520 && y < 850 && Math.abs(x - (520 - ((y - 520) / 330) * 30)) < 26);
-
-  if (isNearRiverSpline) {
+  // 1. Check open sea zones
+  if (isWaterSector(x, y)) {
     const onBridge = bridges?.some(
       b => !b.isDestroyed && Math.abs(x - b.x) < 28 && Math.abs(y - b.y) < 20
     );
     if (!onBridge) {
-      return { type: 'WATER', isRiver: true };
+      return { type: 'WATER', isRiver: x > 300 && x < 700 };
     }
   }
 

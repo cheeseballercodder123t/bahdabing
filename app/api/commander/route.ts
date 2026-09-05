@@ -167,38 +167,42 @@ Respond strictly in valid JSON without markdown wrapping or code blocks with the
 
   // 1. Primary: Google Gemini API
   if (process.env.GEMINI_API_KEY) {
-    try {
-      const ai = new GoogleGenAI({
-        apiKey: process.env.GEMINI_API_KEY,
-        httpOptions: {
-          headers: {
-            "User-Agent": "aistudio-build",
+    const ai = new GoogleGenAI({
+      apiKey: process.env.GEMINI_API_KEY,
+      httpOptions: {
+        headers: {
+          "User-Agent": "aistudio-build",
+        },
+      },
+    });
+
+    const candidateModels = ["gemini-3.8-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"];
+
+    for (const modelName of candidateModels) {
+      try {
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: prompt,
+          config: {
+            responseMimeType: "application/json",
+            temperature: 0.7,
           },
-        },
-      });
+        });
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.1-flash-lite",
-        contents: prompt,
-        config: {
-          responseMimeType: "application/json",
-          temperature: 0.7,
-        },
-      });
-
-      if (response && response.text) {
-        let cleanText = response.text.trim();
-        if (cleanText.startsWith("```json")) {
-          cleanText = cleanText.replace(/^```json\s*/, "").replace(/\s*```$/, "");
-        } else if (cleanText.startsWith("```")) {
-          cleanText = cleanText.replace(/^```\s*/, "").replace(/\s*```$/, "");
+        if (response && response.text) {
+          let cleanText = response.text.trim();
+          if (cleanText.startsWith("```json")) {
+            cleanText = cleanText.replace(/^```json\s*/, "").replace(/\s*```$/, "");
+          } else if (cleanText.startsWith("```")) {
+            cleanText = cleanText.replace(/^```\s*/, "").replace(/\s*```$/, "");
+          }
+          const parsed = JSON.parse(cleanText);
+          parsed.provider = modelName.toUpperCase();
+          return NextResponse.json(parsed);
         }
-        const parsed = JSON.parse(cleanText);
-        parsed.provider = "GEMINI-3.5-FLASH-LITE";
-        return NextResponse.json(parsed);
+      } catch (err) {
+        console.info(`Commander generation on ${modelName} encountered transient condition, checking next provider/model:`, err instanceof Error ? err.message : String(err));
       }
-    } catch (err) {
-      console.warn("Gemini API call failed or rate limited, attempting Groq fallback:", err);
     }
   }
 

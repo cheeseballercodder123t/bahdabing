@@ -23,8 +23,11 @@ export interface ReconSweepZone {
   factionId: FactionId;
 }
 
-// Compute vision radius for a ground unit based on its type and terrain elevation
-export function getUnitVisionRange(unit: Unit): number {
+// Compute vision radius for a unit based on its type, terrain elevation, and weather
+export function getUnitVisionRange(
+  unit: Unit,
+  monsoon?: { x: number; y: number; radius: number }
+): number {
   const terrain = getTerrainAt(unit.x, unit.y);
 
   let baseRange = 140;
@@ -32,22 +35,35 @@ export function getUnitVisionRange(unit: Unit): number {
   else if (unit.type === 'mechanized') baseRange = 170;
   else if (unit.type === 'infantry') baseRange = 135;
   else if (unit.type === 'artillery') baseRange = 130;
-  else if (unit.type === 'sam') baseRange = 150;
+  else if (unit.type === 'sam') baseRange = 180;
+  else if (unit.type === 'carrier') baseRange = 280; // High aerial search radar
+  else if (unit.type === 'destroyer') baseRange = 220; // Surface radar & ASW sonar
+  else if (unit.type === 'submarine') baseRange = unit.isSubmerged ? 110 : 160; // Hydrophone / Periscope
 
   // Elevation bonus: +50% vision range when on hills
   if (terrain.type === 'HILLS') {
-    return baseRange * 1.5;
+    baseRange *= 1.5;
   }
   // Dense forest reduces line of sight
   if (terrain.type === 'FOREST') {
-    return baseRange * 0.7;
+    baseRange *= 0.7;
+  }
+
+  // Dynamic Weather Debuff: Monsoon squall reduces sensor/radar detection by 50%
+  if (monsoon && dist(unit.x, unit.y, monsoon.x, monsoon.y) <= monsoon.radius) {
+    baseRange *= 0.5;
   }
 
   return baseRange;
 }
 
-// Check if a unit is currently concealed (dug in or stealth in forest / urban rubble)
+// Check if a unit is currently concealed (dug in, stealth in forest, or submerged submarine)
 export function isUnitConcealed(unit: Unit): boolean {
+  // Submerged submarines maintain silent running
+  if (unit.type === 'submarine' && unit.isSubmerged !== false && !unit.inCombat) {
+    return true;
+  }
+
   if (unit.inCombat || unit.speed > 0.6) {
     return false; // firing or moving rapidly breaks stealth
   }

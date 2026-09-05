@@ -12,6 +12,19 @@ interface VUMeterProps {
   height?: number;
 }
 
+// Pre-calculated fixed-precision scale ticks to guarantee 100% SSR-client hydration equality
+const STATIC_TICKS = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map((t) => {
+  const angleDeg = -48 + (t / 100) * 96;
+  const angleRad = ((angleDeg - 90) * Math.PI) / 180;
+  const rInner = t % 20 === 0 ? 54 : 58;
+  const rOuter = 65;
+  const x1 = Math.round((80 + Math.cos(angleRad) * rInner) * 100) / 100;
+  const y1 = Math.round((80 + Math.sin(angleRad) * rInner) * 100) / 100;
+  const x2 = Math.round((80 + Math.cos(angleRad) * rOuter) * 100) / 100;
+  const y2 = Math.round((80 + Math.sin(angleRad) * rOuter) * 100) / 100;
+  return { t, x1, y1, x2, y2, isMajor: t % 20 === 0 };
+});
+
 export const VUMeter: React.FC<VUMeterProps> = ({
   value,
   label,
@@ -23,7 +36,7 @@ export const VUMeter: React.FC<VUMeterProps> = ({
 }) => {
   const [jitter, setJitter] = useState(0);
 
-  // Micro-tremor needle realism
+  // Micro-tremor needle realism (client-side only after mount)
   useEffect(() => {
     const interval = setInterval(() => {
       setJitter((Math.random() - 0.5) * 1.5);
@@ -32,8 +45,8 @@ export const VUMeter: React.FC<VUMeterProps> = ({
   }, []);
 
   const clampedVal = Math.min(100, Math.max(0, value + jitter));
-  // Needle angle from -48 deg to +48 deg
-  const needleAngle = -48 + (clampedVal / 100) * 96;
+  // Needle angle from -48 deg to +48 deg, rounded to 2 decimals
+  const needleAngle = Math.round((-48 + (clampedVal / 100) * 96) * 100) / 100;
 
   return (
     <div className="flex flex-col items-center select-none">
@@ -78,28 +91,17 @@ export const VUMeter: React.FC<VUMeterProps> = ({
             />
 
             {/* Scale Tick Marks */}
-            {[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map((t) => {
-              const angleDeg = -48 + (t / 100) * 96;
-              const angleRad = ((angleDeg - 90) * Math.PI) / 180;
-              const rInner = t % 20 === 0 ? 54 : 58;
-              const rOuter = 65;
-              const x1 = 80 + Math.cos(angleRad) * rInner;
-              const y1 = 80 + Math.sin(angleRad) * rInner;
-              const x2 = 80 + Math.cos(angleRad) * rOuter;
-              const y2 = 80 + Math.sin(angleRad) * rOuter;
-
-              return (
-                <line
-                  key={t}
-                  x1={x1}
-                  y1={y1}
-                  x2={x2}
-                  y2={y2}
-                  stroke={t >= dangerThreshold ? '#b91c1c' : t >= warningThreshold ? '#b45309' : '#1e241f'}
-                  strokeWidth={t % 20 === 0 ? 1.5 : 0.8}
-                />
-              );
-            })}
+            {STATIC_TICKS.map(({ t, x1, y1, x2, y2, isMajor }) => (
+              <line
+                key={t}
+                x1={x1}
+                y1={y1}
+                x2={x2}
+                y2={y2}
+                stroke={t >= dangerThreshold ? '#b91c1c' : t >= warningThreshold ? '#b45309' : '#1e241f'}
+                strokeWidth={isMajor ? 1.5 : 0.8}
+              />
+            ))}
 
             {/* Meter Legend Text */}
             <text x="80" y="52" textAnchor="middle" fill="#443c33" fontSize="8" fontFamily="'Chakra Petch', sans-serif" fontWeight="bold" letterSpacing="0.08em">

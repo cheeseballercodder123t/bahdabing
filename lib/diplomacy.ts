@@ -36,7 +36,8 @@ export type CovertOpType =
   | 'INFILTRATE_INTEL'
   | 'SABOTAGE_DEPOT'
   | 'CIPHER_DECRYPT'
-  | 'FALSE_FLAG_INCIDENT';
+  | 'FALSE_FLAG_INCIDENT'
+  | 'COVERT_FINANCIAL_SUPPORT';
 
 export interface CovertOperation {
   id: string;
@@ -353,7 +354,8 @@ export function launchCovertOperation(
     INFILTRATE_INTEL: ['OPERATION NIGHTHAWK', 'BLACK VEIL', 'OPERATION SUNSET', 'DEEP CIPHER'],
     SABOTAGE_DEPOT: ['OPERATION RUPTURE', 'PROJECT BLOWTORCH', 'IRON PLIERS', 'OPERATION DETONATE'],
     CIPHER_DECRYPT: ['PROJECT VENONA-B', 'ULTRA INTERCEPT', 'ENIGMA RED', 'CRYPTO SPIKE'],
-    FALSE_FLAG_INCIDENT: ['OPERATION PROVOCATEUR', 'BORDER SMOKE', 'GREY GHOST', 'INCIDENT CHARLIE']
+    FALSE_FLAG_INCIDENT: ['OPERATION PROVOCATEUR', 'BORDER SMOKE', 'GREY GHOST', 'INCIDENT CHARLIE'],
+    COVERT_FINANCIAL_SUPPORT: ['OPERATION GOLDEN SHADOW', 'PROJECT BACKCHANNEL', 'SILENT COIN', 'SHADOW FUND']
   };
 
   const agencyNames: Record<FactionId, string> = {
@@ -412,7 +414,8 @@ export function stepDiplomaticAI(
   defcon: number,
   simTick: number,
   simTimeStr: string,
-  onSabotageDepot?: (targetFaction: FactionId) => void
+  onSabotageDepot?: (targetFaction: FactionId) => void,
+  onFinancialSupport?: (targetFaction: FactionId, amount: number) => void
 ): { updatedLedger: DiplomaticLedger; newTransmissions: Transmission[] } {
   const nextRelations = { ...ledger.relations };
   const recentEvents = [...ledger.recentEvents];
@@ -593,6 +596,19 @@ export function stepDiplomaticAI(
               message: `INCIDENT TRIGGERED: BORDER GUARDS FIRED UPON. OPPOSING CAPITAL BLAMED IN WORLD PRESS. DEFCON TENSION ESCALATING.`,
               priority: 'FLASH'
             });
+          } else if (op.type === 'COVERT_FINANCIAL_SUPPORT') {
+            const amount = 500 + Math.floor(Math.random() * 500);
+            op.resultSummary = `Successfully funneled $${amount} to ${op.targetFaction.toUpperCase()} through shadow accounts!`;
+            recentEvents.unshift(`COVERT AID: Unmarked cargo planes dropped physical currency and gold bullion to ${op.targetFaction.toUpperCase()}!`);
+            if (onFinancialSupport) onFinancialSupport(op.targetFaction, amount);
+            newTransmissions.push({
+              id: `tx-spy-fin-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              timestamp: simTimeStr,
+              factionId: op.sponsorFaction,
+              callsign: 'TREASURY BLACK OPS',
+              message: `OPERATION SHADOW FUND COMPLETE. UNTRACEABLE CAPITAL DELIVERED TO OUR PROXIES.`,
+              priority: 'HIGH'
+            });
           }
 
           // Update persistent intel dossier
@@ -629,6 +645,7 @@ export function stepDiplomaticAI(
   // 4. Autonomous AI Diplomacy & Covert Decision Making (periodic AI behavior)
   if (simTick % 50 === 0 && ledger.envoys.filter(e => e.status === 'IN_TRANSIT').length < 2) {
     // Check if any faction with high damaged units seeks a ceasefire
+    let envoyProposed = false;
     for (const fId of ['loyalists', 'rebels', 'coalition', 'volskan'] as FactionId[]) {
       const damagedCount = damagedUnitsByFaction[fId]?.length || 0;
       const totalUnits = units.filter(u => u.factionId === fId && u.strength > 0).length;
@@ -661,7 +678,54 @@ export function stepDiplomaticAI(
             message: `DISPATCH TO ADVERSARY: WE PROPOSE IMMEDIATE MUTUAL RECOGNITION OF DEMARCATION BUFFER TO WITHDRAW DAMAGED FORMATIONS TO REPAIR DEPOTS.`,
             priority: 'HIGH'
           });
+          envoyProposed = true;
           break;
+        }
+      }
+    }
+    
+    // If no ceasefire proposed, maybe propose trade or alliance
+    if (!envoyProposed) {
+      const sponsors: FactionId[] = ['loyalists', 'rebels', 'coalition', 'volskan'];
+      const fId = sponsors[Math.floor(Math.random() * sponsors.length)];
+      const facState = factions[fId];
+      if (facState) {
+        // Find a non-adversary to ally or trade with
+        const potentialPartners = sponsors.filter(p => p !== fId && getRelationKey(fId, p) !== getRelationKey('loyalists', 'rebels') && getRelationKey(fId, p) !== getRelationKey('coalition', 'volskan'));
+        const partner = potentialPartners[Math.floor(Math.random() * potentialPartners.length)];
+        const relKey = getRelationKey(fId, partner);
+        const rel = nextRelations[relKey];
+        
+        if (rel) {
+          if (facState.treasury < 1000 && rel.status !== 'TOTAL_WAR') {
+            const autoEnvoy: EnvoyMission = {
+              id: `ai-envoy-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              fromFaction: fId,
+              toFaction: partner,
+              type: 'ECONOMIC_TRADE_PACT',
+              terms: 'Propose lifting of trade quotas to secure mutually beneficial capital injection.',
+              status: 'IN_TRANSIT',
+              progress: 0,
+              etaSeconds: 12,
+              initiatedTick: simTick
+            };
+            updatedEnvoys.push(autoEnvoy);
+            recentEvents.unshift(`TRADE TALKS: ${fId.toUpperCase()} seeks economic stabilization pact with ${partner.toUpperCase()}.`);
+          } else if (rel.tension > 20 && rel.status !== 'FULL_ALLIANCE') {
+            const autoEnvoy: EnvoyMission = {
+              id: `ai-envoy-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              fromFaction: fId,
+              toFaction: partner,
+              type: 'DEFENSIVE_ALLIANCE',
+              terms: 'Propose unified front: Mutual defense against external aggression.',
+              status: 'IN_TRANSIT',
+              progress: 0,
+              etaSeconds: 15,
+              initiatedTick: simTick
+            };
+            updatedEnvoys.push(autoEnvoy);
+            recentEvents.unshift(`ALLIANCE SUMMIT: ${fId.toUpperCase()} dispatches high-level delegation to ${partner.toUpperCase()} to solidify mutual defense.`);
+          }
         }
       }
     }
@@ -672,19 +736,26 @@ export function stepDiplomaticAI(
     const sponsors: FactionId[] = ['coalition', 'volskan', 'loyalists', 'rebels'];
     const sponsor = sponsors[Math.floor(Math.random() * sponsors.length)];
     const targets = sponsors.filter(f => f !== sponsor);
-    const target = targets[Math.floor(Math.random() * targets.length)];
-    const types: CovertOpType[] = ['INFILTRATE_INTEL', 'CIPHER_DECRYPT', 'SABOTAGE_DEPOT'];
-    const chosenType = types[Math.floor(Math.random() * types.length)];
+    let target = targets[Math.floor(Math.random() * targets.length)];
+    const types: CovertOpType[] = ['INFILTRATE_INTEL', 'CIPHER_DECRYPT', 'SABOTAGE_DEPOT', 'COVERT_FINANCIAL_SUPPORT'];
+    let chosenType = types[Math.floor(Math.random() * types.length)];
+    
+    // Only send financial support to proxies
+    if (chosenType === 'COVERT_FINANCIAL_SUPPORT') {
+      if (sponsor === 'coalition') target = 'loyalists';
+      else if (sponsor === 'volskan') target = 'rebels';
+      else chosenType = 'INFILTRATE_INTEL';
+    }
 
     const aiOp: CovertOperation = {
       id: `ai-covert-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       sponsorFaction: sponsor,
       targetFaction: target,
       type: chosenType,
-      codename: chosenType === 'INFILTRATE_INTEL' ? 'OPERATION GREY CIPHER' : chosenType === 'SABOTAGE_DEPOT' ? 'PROJECT DYNAMO' : 'RADIO INTERCEPT VENONA',
+      codename: chosenType === 'INFILTRATE_INTEL' ? 'OPERATION GREY CIPHER' : chosenType === 'SABOTAGE_DEPOT' ? 'PROJECT DYNAMO' : chosenType === 'COVERT_FINANCIAL_SUPPORT' ? 'PROJECT BACKCHANNEL' : 'RADIO INTERCEPT VENONA',
       status: 'INFILTRATING',
       progress: 0,
-      successChance: 72,
+      successChance: chosenType === 'COVERT_FINANCIAL_SUPPORT' ? 85 : 72,
       initiatedTick: simTick
     };
     updatedOps.push(aiOp);

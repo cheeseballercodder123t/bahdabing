@@ -16,6 +16,12 @@ export interface FactionResources {
   manpowerRate: number;
   treasury: number;             // financial capital ($ / Rubles / Pesos)
   treasuryRate: number;
+  food: number;                 // sustenance
+  foodCapacity: number;
+  foodRate: number;
+  rareEarths: number;           // advanced electronics/munitions
+  rareEarthsCapacity: number;
+  rareEarthsRate: number;
 }
 
 export interface TradeRoute {
@@ -40,6 +46,8 @@ export interface ProductionQueueItem {
     ip: number;
     manpower: number;
     treasury: number;
+    food: number;
+    rareEarths: number;
   };
 }
 
@@ -52,13 +60,15 @@ export interface EconomyState {
 
 export const UNIT_BUILD_COSTS: Record<
   UnitType,
-  { oil: number; ip: number; manpower: number; treasury: number; name: string }
+  { oil: number; ip: number; manpower: number; treasury: number; food: number; rareEarths: number; name: string }
 > = {
   armor: {
     oil: 110,
     ip: 75,
     manpower: 45,
     treasury: 90,
+    food: 40,
+    rareEarths: 25,
     name: 'Heavy Armored Battalion'
   },
   mechanized: {
@@ -66,6 +76,8 @@ export const UNIT_BUILD_COSTS: Record<
     ip: 55,
     manpower: 55,
     treasury: 65,
+    food: 50,
+    rareEarths: 10,
     name: 'Mechanized Infantry Bde'
   },
   infantry: {
@@ -73,6 +85,8 @@ export const UNIT_BUILD_COSTS: Record<
     ip: 25,
     manpower: 90,
     treasury: 35,
+    food: 80,
+    rareEarths: 0,
     name: 'Rifle Contingent'
   },
   artillery: {
@@ -80,6 +94,8 @@ export const UNIT_BUILD_COSTS: Record<
     ip: 70,
     manpower: 40,
     treasury: 80,
+    food: 35,
+    rareEarths: 5,
     name: 'Heavy Howitzer Battery'
   },
   sam: {
@@ -87,7 +103,36 @@ export const UNIT_BUILD_COSTS: Record<
     ip: 65,
     manpower: 35,
     treasury: 75,
+    food: 30,
+    rareEarths: 40,
     name: 'Air Defense Radar Battery'
+  },
+  carrier: {
+    oil: 250,
+    ip: 180,
+    manpower: 120,
+    treasury: 280,
+    food: 110,
+    rareEarths: 85,
+    name: 'Fleet Aircraft Carrier'
+  },
+  destroyer: {
+    oil: 120,
+    ip: 95,
+    manpower: 60,
+    treasury: 130,
+    food: 55,
+    rareEarths: 35,
+    name: 'ASW Guided Missile Destroyer'
+  },
+  submarine: {
+    oil: 90,
+    ip: 110,
+    manpower: 45,
+    treasury: 160,
+    food: 40,
+    rareEarths: 50,
+    name: 'Attack Nuclear Submarine'
   }
 };
 
@@ -105,7 +150,13 @@ export function createInitialEconomy(): EconomyState {
         manpowerCapacity: 2000,
         manpowerRate: 30,
         treasury: 1450,
-        treasuryRate: 35
+        treasuryRate: 35,
+        food: 950,
+        foodCapacity: 1500,
+        foodRate: 25,
+        rareEarths: 150,
+        rareEarthsCapacity: 400,
+        rareEarthsRate: 5
       },
       rebels: {
         oil: 310,
@@ -118,7 +169,13 @@ export function createInitialEconomy(): EconomyState {
         manpowerCapacity: 2500,
         manpowerRate: 40,
         treasury: 620,
-        treasuryRate: 18
+        treasuryRate: 18,
+        food: 1100,
+        foodCapacity: 1800,
+        foodRate: 35,
+        rareEarths: 80,
+        rareEarthsCapacity: 200,
+        rareEarthsRate: 2
       },
       coalition: {
         oil: 2400,
@@ -131,7 +188,13 @@ export function createInitialEconomy(): EconomyState {
         manpowerCapacity: 5000,
         manpowerRate: 25,
         treasury: 4800,
-        treasuryRate: 60
+        treasuryRate: 60,
+        food: 3500,
+        foodCapacity: 5500,
+        foodRate: 40,
+        rareEarths: 1200,
+        rareEarthsCapacity: 2500,
+        rareEarthsRate: 30
       },
       volskan: {
         oil: 1950,
@@ -144,7 +207,13 @@ export function createInitialEconomy(): EconomyState {
         manpowerCapacity: 6000,
         manpowerRate: 35,
         treasury: 3900,
-        treasuryRate: 50
+        treasuryRate: 50,
+        food: 2800,
+        foodCapacity: 4500,
+        foodRate: 30,
+        rareEarths: 900,
+        rareEarthsCapacity: 2000,
+        rareEarthsRate: 25
       },
       unified: {
         oil: 2800,
@@ -157,7 +226,13 @@ export function createInitialEconomy(): EconomyState {
         manpowerCapacity: 8000,
         manpowerRate: 80,
         treasury: 5200,
-        treasuryRate: 90
+        treasuryRate: 90,
+        food: 4200,
+        foodCapacity: 7500,
+        foodRate: 60,
+        rareEarths: 1500,
+        rareEarthsCapacity: 3000,
+        rareEarthsRate: 40
       }
     },
     tradeRoutes: [
@@ -222,6 +297,8 @@ export function stepEconomy(
     let dIp = (12 / 60) * dt;
     let dMan = (15 / 60) * dt;
     let dCash = (15 / 60) * dt;
+    let dFood = (20 / 60) * dt;
+    let dRareEarths = (5 / 60) * dt;
 
     // Additional yields from nodes
     for (const node of nodes) {
@@ -229,19 +306,25 @@ export function stepEconomy(
         if (node.type === 'OIL_REFINERY') {
           dOil += (45 / 60) * dt; // massive refinery yield
           dCash += (20 / 60) * dt;
+          dRareEarths += (5 / 60) * dt;
         } else if (node.type === 'CAPITAL') {
           dMan += (35 / 60) * dt;
           dIp += (25 / 60) * dt;
           dCash += (35 / 60) * dt;
+          dFood += (40 / 60) * dt;
+          dRareEarths += (10 / 60) * dt;
         } else if (node.type === 'PORT') {
           dIp += (20 / 60) * dt;
           dCash += (30 / 60) * dt;
           dOil += (10 / 60) * dt;
+          dFood += (15 / 60) * dt;
         } else if (node.type === 'DEPOT') {
           dIp += (15 / 60) * dt;
           dOil += (12 / 60) * dt;
+          dFood += (10 / 60) * dt;
         } else if (node.type === 'REDOUT') {
           dMan += (20 / 60) * dt;
+          dRareEarths += (8 / 60) * dt;
         }
       }
     }
@@ -262,9 +345,11 @@ export function stepEconomy(
           if (tr.id === 'trade-atlantic-loyalists') {
             dOil += (18 / 60) * dt;
             dIp += (14 / 60) * dt;
+            dRareEarths += (10 / 60) * dt;
           } else if (tr.id === 'trade-volskan-rebels') {
             dOil += (12 / 60) * dt;
             dIp += (16 / 60) * dt;
+            dFood += (15 / 60) * dt;
           }
         }
         if (tr.fromFaction === fId && tr.id === 'trade-loyalist-oil-export') {
@@ -277,12 +362,16 @@ export function stepEconomy(
     r.industrialProduction = Math.min(r.ipCapacity, Math.max(0, r.industrialProduction + dIp));
     r.manpower = Math.min(r.manpowerCapacity, Math.max(0, r.manpower + dMan));
     r.treasury = Math.max(0, r.treasury + dCash);
+    r.food = Math.min(r.foodCapacity, Math.max(0, r.food + dFood));
+    r.rareEarths = Math.min(r.rareEarthsCapacity, Math.max(0, r.rareEarths + dRareEarths));
 
     // Compute rates per minute
     r.oilRate = Math.round(dOil * (60 / dt));
     r.ipRate = Math.round(dIp * (60 / dt));
     r.manpowerRate = Math.round(dMan * (60 / dt));
     r.treasuryRate = Math.round(dCash * (60 / dt));
+    r.foodRate = Math.round(dFood * (60 / dt));
+    r.rareEarthsRate = Math.round(dRareEarths * (60 / dt));
 
     nextRes[fId] = r;
   }
@@ -324,6 +413,8 @@ export function stepEconomy(
           r.industrialProduction >= cost.ip &&
           r.manpower >= cost.manpower &&
           r.treasury >= cost.treasury &&
+          r.food >= cost.food &&
+          r.rareEarths >= cost.rareEarths &&
           !nextQueues.some(q => q.factionId === fId)
         ) {
           // Deduct resources
@@ -331,6 +422,8 @@ export function stepEconomy(
           r.industrialProduction -= cost.ip;
           r.manpower -= cost.manpower;
           r.treasury -= cost.treasury;
+          r.food -= cost.food;
+          r.rareEarths -= cost.rareEarths;
 
           const numSuffix = producedCount + 1;
           const unitName = `${fId.toUpperCase()} Reinforcement Div #${numSuffix} (${cost.name})`;
